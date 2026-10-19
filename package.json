@@ -1,6 +1,6 @@
 {
   "name": "cafetimer",
-  "version": "1.0.0",
+  "version": "1.2.0",
   "description": "Electron-based cyber cafe workstation timer and kiosk dashboard",
   "main": "src/main.js",
   "author": "CafeTimer",

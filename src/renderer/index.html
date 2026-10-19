@@ -94,6 +94,27 @@
       </form>
     </dialog>
 
+    <dialog id="member-topup-dialog" class="dialog">
+      <form id="member-topup-form" method="dialog">
+        <p class="eyebrow">CASHIER TOP-UP</p><h2 id="member-topup-title">Add member balance</h2>
+        <input id="member-topup-id" type="hidden">
+        <label>Amount in PHP <input id="member-topup-amount" type="number" min="1" max="1000" step="0.01" required></label>
+        <p id="member-topup-error" class="error" role="alert"></p>
+        <div class="dialog-actions"><button type="button" data-close-dialog="member-topup-dialog" class="secondary">Cancel</button><button class="primary" value="default">Add balance</button></div>
+      </form>
+    </dialog>
+
+    <dialog id="edit-member-dialog" class="dialog">
+      <form id="edit-member-form" method="dialog">
+        <p class="eyebrow">MEMBER SETTINGS</p><h2>Edit member</h2>
+        <input id="edit-member-id" type="hidden">
+        <label>Username <input id="edit-member-username" type="text" minlength="3" maxlength="24" required></label>
+        <label>New password <input id="edit-member-password" type="password" minlength="12" maxlength="128" autocomplete="new-password" placeholder="Leave blank to keep current password"></label>
+        <p id="edit-member-error" class="error" role="alert"></p>
+        <div class="dialog-actions"><button type="button" data-close-dialog="edit-member-dialog" class="secondary">Cancel</button><button class="primary" value="default">Save changes</button></div>
+      </form>
+    </dialog>
+
     <div id="toast" class="toast" role="status"></div>
     <aside id="update-banner" class="update-banner" hidden aria-live="polite">
       <div><strong id="update-title">CafeTimer update available</strong><p id="update-message"></p></div>

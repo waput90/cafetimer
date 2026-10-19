@@ -17,6 +17,8 @@ let clientSetupMode = false;
 let updateState = null;
 
 function money(cents) { return `PHP ${(Number(cents || 0) / 100).toFixed(2)}`; }
+function shortDate(value) { return value ? new Date(value).toLocaleString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' }) : '-'; }
+function durationBetween(start, end) { return formatTime(Math.floor(Math.max(0, end - start) / 1000)); }
 
 function renderRoleSetup() {
   if (lastClientViewKey === 'role') return;
@@ -117,7 +119,8 @@ function renderAdmin() {
     const station = { id: deviceId, name: name || 'New client' };
     const current = (state.sessions || []).find((session) => session.deviceId === deviceId);
     return current ? { ...station, status: current.balanceMicrocents > 0 ? 'active' : 'expired',
-      customer: current.username, remainingSeconds: Math.floor(current.balanceMicrocents * 3.6 / 3_000_000) } :
+      userId: current.userId, customer: current.username,
+      remainingSeconds: Math.floor(current.balanceMicrocents * (state.pricing?.secondsPerPeso || 120) / 100_000_000) } :
       { ...station, status: 'available', customer: null };
   });
   const active = stations.filter((station) => station.status === 'active').length;
@@ -145,13 +148,25 @@ function renderAdmin() {
           <div class="stat"><span class="stat-label">Active sessions</span><strong class="stat-value green">${active}</strong></div>
           <div class="stat"><span class="stat-label">Available PCs</span><strong class="stat-value">${available}</strong></div>
           <div class="stat"><span class="stat-label">Pending accounts</span><strong class="stat-value yellow">${pendingAccounts}</strong></div>
-          <div class="stat"><span class="stat-label">Pending top-ups</span><strong class="stat-value">${(state.topupRequests || []).length}</strong></div>
+          <div class="stat"><span class="stat-label">Sales today</span><strong class="stat-value">${money(state.sales?.todayCents)}</strong></div>
         </section>
         <section class="server-card"><strong>Server setup for workstations</strong><p>Enter this IP on each client: ${(server?.addresses || []).map(escapeHtml).join(', ') || 'No LAN address'} · Port: ${server?.port || ''}</p><p>The client remembers this server's certificate during its first successful connection.</p></section>
+        <section class="admin-requests"><div><h2>Global timer pricing</h2>
+          <form id="pricing-form" class="inline-form"><label>Minutes per PHP 1 <input name="minutesPerPeso" type="number" min="0.1667" max="1440" step="0.0167" value="${((state.pricing?.secondsPerPeso || 120) / 60).toFixed(2)}" required></label><button class="primary">Save rate</button></form>
+          <p class="muted">Current equivalent: ${money(state.pricing?.rateCentsPerHour)} per hour.</p></div>
+          <div><h2>Sales report</h2><p class="sales-total">${money(state.sales?.allTimeCents)}</p><p class="muted">All-time approved top-ups · Today ${money(state.sales?.todayCents)}</p></div></section>
         <section class="admin-requests"><div><h2>Account approvals</h2>
           ${(state.accounts || []).filter((account) => account.status === 'pending').map((account) => `<article class="request-row"><strong>${escapeHtml(account.username)}</strong><div><button data-action="approve-account" data-id="${account.id}">Approve</button><button data-action="reject-account" data-id="${account.id}">Reject</button></div></article>`).join('') || '<p class="muted">No pending accounts.</p>'}</div>
           <div><h2>Top-up requests</h2>${(state.topupRequests || []).map((request) => `<article class="request-row"><strong>${escapeHtml(request.username)} · ${money(request.amountCents)}</strong><div><button data-action="approve-topup" data-id="${request.id}">Approve</button><button data-action="reject-topup" data-id="${request.id}">Reject</button></div></article>`).join('') || '<p class="muted">No pending top-ups.</p>'}</div></section>
-        <section class="server-card"><strong>Accounts and balances</strong><div class="account-list">${(state.accounts || []).map((account) => `<span>${escapeHtml(account.username)} · ${escapeHtml(account.status)} · ${money(Math.floor(account.balanceMicrocents / 1_000_000))}</span>`).join('') || 'No accounts yet.'}</div></section>
+        <section class="server-card"><strong>Members</strong><div class="admin-table">${(state.accounts || []).map((account) => {
+          const activeSession = (state.sessions || []).find((session) => session.userId === account.id);
+          return `<article class="member-row"><div><b>${escapeHtml(account.username)}</b><small>${account.bannedAt ? 'Banned' : escapeHtml(account.status)} · ${money(Math.floor(account.balanceMicrocents / 1_000_000))}${activeSession ? ' · Online' : ''}</small></div><div class="row-actions">
+            <button data-action="member-topup" data-id="${account.id}" data-name="${escapeHtml(account.username)}">Top up</button>
+            <button data-action="edit-member" data-id="${account.id}" data-name="${escapeHtml(account.username)}">Edit</button>
+            <button data-action="toggle-ban" data-id="${account.id}" data-banned="${account.bannedAt ? 'true' : 'false'}">${account.bannedAt ? 'Unban' : 'Ban'}</button>
+            ${activeSession ? `<button class="danger" data-action="force-logout" data-device="${activeSession.deviceId}">Log out</button>` : ''}
+          </div></article>`;
+        }).join('') || '<p class="muted">No members yet.</p>'}</div></section>
         <div class="section-heading"><h2>Workstation floor</h2><div class="legend"><span class="available">Available</span><span class="active">In use</span><span class="paused">Paused</span></div></div>
         <section class="station-grid">
           ${stations.map((station) => `
@@ -160,9 +175,11 @@ function renderAdmin() {
               <div class="timer">${stationTimer(station)}</div>
               <div class="customer">${escapeHtml(station.customer || (station.status === 'expired' ? 'Time expired' : 'No active customer'))}</div>
               <div class="customer">${station.status === 'active' ? 'Logged in' : 'Waiting for approved account'}</div>
-              <button class="secondary" data-action="rename-client" data-device="${station.id}" data-name="${escapeHtml(station.name)}">Rename client</button>
+              <div class="station-actions"><button class="secondary" data-action="rename-client" data-device="${station.id}" data-name="${escapeHtml(station.name)}">Rename</button>${station.customer ? `<button class="danger" data-action="force-logout" data-device="${station.id}">Log out</button>` : ''}</div>
             </article>`).join('') || '<p class="muted">No workstations connected. Configure a client with this server IP.</p>'}
         </section>
+        <section class="report-grid"><div class="server-card"><strong>Recent sales</strong><div class="compact-list">${(state.sales?.recent || []).map((sale) => `<span><b>${money(sale.amountCents)}</b> ${escapeHtml(sale.username)}<small>${sale.source === 'admin' ? 'Cashier top-up' : 'Approved request'} · ${shortDate(sale.reviewedAt)}</small></span>`).join('') || '<p class="muted">No sales recorded.</p>'}</div></div>
+          <div class="server-card"><strong>Client usage history</strong><div class="compact-list">${(state.usageHistory || []).map((item) => `<span><b>${escapeHtml(item.username)}</b> on ${escapeHtml(item.workstationName || item.deviceId)}<small>${durationBetween(item.startedAt, item.endedAt)} · ${money(Math.floor(item.chargedMicrocents / 1_000_000))} · ${escapeHtml(item.endReason.replaceAll('_', ' '))}</small></span>`).join('') || '<p class="muted">No completed sessions.</p>'}</div></div></section>
       </main>
       <aside class="activity-panel">
         <p class="eyebrow">SYSTEM LOG</p><h2>Recent activity</h2>
@@ -347,6 +364,28 @@ appElement.addEventListener('click', (event) => {
     document.querySelector('#rename-client-dialog').showModal();
     document.querySelector('#rename-client-name').focus();
   }
+  if (action === 'member-topup') {
+    document.querySelector('#member-topup-form').reset();
+    document.querySelector('#member-topup-id').value = button.dataset.id;
+    document.querySelector('#member-topup-title').textContent = `Add balance to ${button.dataset.name}`;
+    document.querySelector('#member-topup-error').textContent = '';
+    document.querySelector('#member-topup-dialog').showModal();
+    document.querySelector('#member-topup-amount').focus();
+  }
+  if (action === 'edit-member') {
+    document.querySelector('#edit-member-form').reset();
+    document.querySelector('#edit-member-id').value = button.dataset.id;
+    document.querySelector('#edit-member-username').value = button.dataset.name;
+    document.querySelector('#edit-member-error').textContent = '';
+    document.querySelector('#edit-member-dialog').showModal();
+    document.querySelector('#edit-member-username').focus();
+  }
+  if (action === 'toggle-ban') window.cafeTimer.setMemberBanned(Number(button.dataset.id), button.dataset.banned !== 'true')
+    .then(() => showToast(button.dataset.banned === 'true' ? 'Member unbanned' : 'Member banned'))
+    .catch((error) => showToast(error.message));
+  if (action === 'force-logout') window.cafeTimer.forceLogout(button.dataset.device)
+    .then(() => showToast('Client logged out'))
+    .catch((error) => showToast(error.message));
   if (action === 'topup') { document.querySelector('#topup-form').reset(); document.querySelector('#topup-error').textContent = ''; document.querySelector('#topup-dialog').showModal(); }
   if (action === 'approve-account' || action === 'reject-account') window.cafeTimer.reviewAccount(Number(button.dataset.id), action === 'approve-account').catch((error) => showToast(error.message));
   if (action === 'approve-topup' || action === 'reject-topup') window.cafeTimer.reviewTopup(Number(button.dataset.id), action === 'approve-topup').catch((error) => showToast(error.message));
@@ -439,6 +478,36 @@ document.querySelector('#rename-client-form').addEventListener('submit', async (
     document.querySelector('#rename-client-dialog').close();
     showToast('Client renamed');
   } catch (error) { document.querySelector('#rename-client-error').textContent = error.message || 'Unable to rename client.'; }
+});
+
+appElement.addEventListener('submit', async (event) => {
+  if (event.target.id !== 'pricing-form') return;
+  event.preventDefault();
+  const minutes = Number(new FormData(event.target).get('minutesPerPeso'));
+  try {
+    await window.cafeTimer.setPricing(Math.round(minutes * 60));
+    showToast('Global timer rate updated');
+  } catch (error) { showToast(error.message || 'Unable to update pricing.'); }
+});
+
+document.querySelector('#member-topup-form').addEventListener('submit', async (event) => {
+  event.preventDefault();
+  try {
+    const amountCents = Math.round(Number(document.querySelector('#member-topup-amount').value) * 100);
+    await window.cafeTimer.directTopup(Number(document.querySelector('#member-topup-id').value), amountCents);
+    document.querySelector('#member-topup-dialog').close();
+    showToast('Balance added');
+  } catch (error) { document.querySelector('#member-topup-error').textContent = error.message || 'Unable to add balance.'; }
+});
+
+document.querySelector('#edit-member-form').addEventListener('submit', async (event) => {
+  event.preventDefault();
+  try {
+    await window.cafeTimer.updateMember(Number(document.querySelector('#edit-member-id').value),
+      document.querySelector('#edit-member-username').value, document.querySelector('#edit-member-password').value);
+    document.querySelector('#edit-member-dialog').close();
+    showToast('Member updated');
+  } catch (error) { document.querySelector('#edit-member-error').textContent = error.message || 'Unable to update member.'; }
 });
 
 document.querySelector('#change-pin-form').addEventListener('submit', async (event) => {

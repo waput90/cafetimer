@@ -6,6 +6,10 @@ const https = require('node:https');
 const { X509Certificate } = require('node:crypto');
 const { PORT } = require('./server-api');
 
+function unreachableMessage(ip, port) {
+  return `Cannot reach CafeTimer server at ${ip}:${port}. Use the cashier PC's LAN IPv4 address, keep both PCs on the same network, and allow inbound TCP port ${port} through Windows Firewall.`;
+}
+
 function validateConfig(ip, fingerprint) {
   if (net.isIP(String(ip || '')) !== 4) throw new Error('Enter the server IPv4 address.');
   const normalized = String(fingerprint || '').replaceAll(':', '').replaceAll(' ', '').toUpperCase();
@@ -37,7 +41,7 @@ function discoverFingerprint(ip, port) {
       socket.destroy();
       if (error) reject(error); else resolve(fingerprint);
     };
-    socket.setTimeout(5000, () => finish(new Error('Server connection timed out.')));
+    socket.setTimeout(7000, () => finish(new Error(unreachableMessage(ip, port))));
     socket.once('secureConnect', () => {
       try {
         const peer = socket.getPeerCertificate(true);
@@ -49,7 +53,7 @@ function discoverFingerprint(ip, port) {
         finish(null, cert.fingerprint256.replaceAll(':', '').toUpperCase());
       } catch (error) { finish(error); }
     });
-    socket.once('error', finish);
+    socket.once('error', (error) => finish(new Error(`${unreachableMessage(ip, port)} (${error.code || error.message})`)));
   });
 }
 
@@ -74,7 +78,7 @@ class PinnedAgent extends https.Agent {
       if (error) socket.destroy();
       callback(error || null, error ? undefined : socket);
     };
-    socket.setTimeout(5000, () => finish(new Error('Server connection timed out.')));
+    socket.setTimeout(7000, () => finish(new Error(unreachableMessage(this.config.ip, this.port))));
     socket.once('secureConnect', () => {
       try {
         verifyPinnedCertificate(socket, this.config.fingerprint);
@@ -84,7 +88,7 @@ class PinnedAgent extends https.Agent {
         finish(error);
       }
     });
-    socket.once('error', finish);
+    socket.once('error', (error) => finish(new Error(`${unreachableMessage(this.config.ip, this.port)} (${error.code || error.message})`)));
   }
 }
 
@@ -111,7 +115,7 @@ class ClientApi {
     if (!config) throw new Error('Enter the server IP first.');
     return new Promise((resolve, reject) => {
       const agent = new PinnedAgent(config, this.port);
-      const request = https.request({ host: config.ip, port: this.port, path: route, method, agent, timeout: 5000,
+      const request = https.request({ host: config.ip, port: this.port, path: route, method, agent, timeout: 7000,
         headers: { 'Content-Type': 'application/json' } }, (response) => {
         let raw = '';
         response.on('data', (chunk) => { raw += chunk; if (raw.length > 16384) request.destroy(new Error('Server response too large.')); });
@@ -124,7 +128,7 @@ class ClientApi {
           } catch (error) { reject(error); }
         });
       });
-      request.once('timeout', () => request.destroy(new Error('Server connection timed out.')));
+      request.once('timeout', () => request.destroy(new Error(unreachableMessage(config.ip, this.port))));
       request.once('error', (error) => { agent.destroy(); reject(error); });
       request.end(method === 'POST' ? JSON.stringify(payload) : undefined);
     });
@@ -176,4 +180,4 @@ class ClientApi {
   }
 }
 
-module.exports = { ClientApi, PinnedAgent, discoverFingerprint, validateConfig, verifyPinnedCertificate };
+module.exports = { ClientApi, PinnedAgent, discoverFingerprint, unreachableMessage, validateConfig, verifyPinnedCertificate };

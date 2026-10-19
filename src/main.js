@@ -82,7 +82,12 @@ function clientMayUse() {
 }
 
 function serverAddresses() {
-  return Object.values(os.networkInterfaces()).flat().filter((item) => item.family === 'IPv4' && !item.internal).map((item) => item.address);
+  const virtualAdapter = /vEthernet|Hyper-V|VMware|VirtualBox|Loopback|Tailscale|ZeroTier|VPN/i;
+  const entries = Object.entries(os.networkInterfaces()).flatMap(([name, addresses]) =>
+    (addresses || []).filter((item) => item.family === 'IPv4' && !item.internal && !item.address.startsWith('169.254.'))
+      .map((item) => ({ name, address: item.address })));
+  const physical = entries.filter((item) => !virtualAdapter.test(item.name));
+  return (physical.length ? physical : entries).map((item) => item.address);
 }
 
 function clientSnapshot() {
@@ -319,6 +324,51 @@ function registerIpc() {
     validateSender(event);
     if (runMode !== 'admin' || !adminAuthorized) throw new Error('Cashier login required.');
     const result = accountDb.renameWorkstation(payload?.deviceId, payload?.name);
+    broadcastState();
+    return result;
+  });
+
+  ipcMain.handle('admin:set-pricing', (event, secondsPerPeso) => {
+    validateSender(event);
+    if (runMode !== 'admin' || !adminAuthorized) throw new Error('Cashier login required.');
+    const result = accountDb.setPricing(Number(secondsPerPeso));
+    store.update((state) => addActivity(state, `Pricing changed to ${result.secondsPerPeso} seconds per PHP 1`));
+    broadcastState();
+    return result;
+  });
+
+  ipcMain.handle('admin:direct-topup', (event, payload) => {
+    validateSender(event);
+    if (runMode !== 'admin' || !adminAuthorized) throw new Error('Cashier login required.');
+    const result = accountDb.directTopup(Number(payload?.userId), Number(payload?.amountCents));
+    store.update((state) => addActivity(state, `Administrator added PHP ${(Number(payload?.amountCents) / 100).toFixed(2)} to a member`));
+    broadcastState();
+    return result;
+  });
+
+  ipcMain.handle('admin:update-member', (event, payload) => {
+    validateSender(event);
+    if (runMode !== 'admin' || !adminAuthorized) throw new Error('Cashier login required.');
+    const result = accountDb.updateMember(Number(payload?.userId), payload?.username, payload?.password);
+    store.update((state) => addActivity(state, `Member ${String(payload?.username || '').trim()} updated`));
+    broadcastState();
+    return result;
+  });
+
+  ipcMain.handle('admin:set-member-banned', (event, payload) => {
+    validateSender(event);
+    if (runMode !== 'admin' || !adminAuthorized) throw new Error('Cashier login required.');
+    const result = accountDb.setMemberBanned(Number(payload?.userId), payload?.banned === true);
+    store.update((state) => addActivity(state, `Member account ${payload?.banned === true ? 'banned' : 'unbanned'}`));
+    broadcastState();
+    return result;
+  });
+
+  ipcMain.handle('admin:force-logout', (event, deviceId) => {
+    validateSender(event);
+    if (runMode !== 'admin' || !adminAuthorized) throw new Error('Cashier login required.');
+    const result = accountDb.forceLogout(deviceId);
+    store.update((state) => addActivity(state, 'Administrator logged out a client'));
     broadcastState();
     return result;
   });

@@ -5,7 +5,7 @@ const { DatabaseSync } = require('node:sqlite');
 const { hashPin, verifyPin } = require('./security');
 
 const RATE_CENTS_PER_HOUR = 3000;
-const DENOMINATOR = 3_600_000;
+const DEFAULT_SECONDS_PER_PESO = 120;
 
 function validateDeviceId(deviceId) {
   const value = String(deviceId || '').trim();
@@ -42,11 +42,26 @@ class AccountDb {
       );
       CREATE TABLE IF NOT EXISTS workstations (
         station_id TEXT PRIMARY KEY, last_seen_at INTEGER NOT NULL
+      );
+      CREATE TABLE IF NOT EXISTS settings (
+        key TEXT PRIMARY KEY, value TEXT NOT NULL
+      );
+      CREATE TABLE IF NOT EXISTS usage_history (
+        id INTEGER PRIMARY KEY, user_id INTEGER NOT NULL REFERENCES users(id),
+        station_id TEXT NOT NULL, started_at INTEGER NOT NULL, ended_at INTEGER NOT NULL,
+        charged_microcents INTEGER NOT NULL DEFAULT 0, end_reason TEXT NOT NULL
       );`);
-    const columns = this.db.prepare('PRAGMA table_info(sessions)').all().map((column) => column.name);
-    if (!columns.includes('last_seen_at')) this.db.exec('ALTER TABLE sessions ADD COLUMN last_seen_at INTEGER NOT NULL DEFAULT 0');
+    const sessionColumns = this.db.prepare('PRAGMA table_info(sessions)').all().map((column) => column.name);
+    if (!sessionColumns.includes('last_seen_at')) this.db.exec('ALTER TABLE sessions ADD COLUMN last_seen_at INTEGER NOT NULL DEFAULT 0');
+    if (!sessionColumns.includes('started_at')) this.db.exec('ALTER TABLE sessions ADD COLUMN started_at INTEGER NOT NULL DEFAULT 0');
+    if (!sessionColumns.includes('charged_microcents')) this.db.exec('ALTER TABLE sessions ADD COLUMN charged_microcents INTEGER NOT NULL DEFAULT 0');
+    const userColumns = this.db.prepare('PRAGMA table_info(users)').all().map((column) => column.name);
+    if (!userColumns.includes('banned_at')) this.db.exec('ALTER TABLE users ADD COLUMN banned_at INTEGER');
+    const topupColumns = this.db.prepare('PRAGMA table_info(topups)').all().map((column) => column.name);
+    if (!topupColumns.includes('source')) this.db.exec("ALTER TABLE topups ADD COLUMN source TEXT NOT NULL DEFAULT 'client_request'");
     const workstationColumns = this.db.prepare('PRAGMA table_info(workstations)').all().map((column) => column.name);
     if (!workstationColumns.includes('name')) this.db.exec('ALTER TABLE workstations ADD COLUMN name TEXT');
+    this.db.prepare("INSERT OR IGNORE INTO settings(key,value) VALUES('seconds_per_peso',?)").run(String(DEFAULT_SECONDS_PER_PESO));
     // Client tokens live only in workstation memory, so a server restart invalidates them.
     this.db.exec('DELETE FROM sessions');
   }
@@ -55,6 +70,14 @@ class AccountDb {
     this.db.exec('BEGIN IMMEDIATE');
     try { const value = work(); this.db.exec('COMMIT'); return value; }
     catch (error) { this.db.exec('ROLLBACK'); throw error; }
+  }
+
+  secondsPerPeso() {
+    return Number(this.db.prepare("SELECT value FROM settings WHERE key='seconds_per_peso'").get()?.value || DEFAULT_SECONDS_PER_PESO);
+  }
+
+  rateCentsPerHour() {
+    return Math.round(360000 / this.secondsPerPeso());
   }
 
   register(username, password) {
@@ -76,18 +99,19 @@ class AccountDb {
     deviceId = validateDeviceId(deviceId);
     const user = this.db.prepare('SELECT * FROM users WHERE username=?').get(String(username || '').trim());
     if (!user || !verifyPin(password, { salt: user.salt, hash: user.password_hash })) throw new Error('Invalid username or password.');
+    if (user.banned_at) throw new Error('This account has been banned. Contact the administrator.');
     if (user.status !== 'approved') throw new Error('Account is waiting for administrator approval.');
     const token = crypto.randomBytes(32).toString('base64url');
     this.transaction(() => {
       const existing = this.db.prepare('SELECT token_hash FROM sessions WHERE user_id=?').get(user.id);
       if (existing) {
         const previous = this.sessionByHash(existing.token_hash);
-        if (previous) this.charge(previous, Math.min(Date.now(), previous.last_seen_at + 5000));
+        if (previous) this.closeSession(previous, 'new_login', previous.last_seen_at);
       }
       this.db.prepare('DELETE FROM sessions WHERE user_id=?').run(user.id);
       const now = Date.now();
-      this.db.prepare('INSERT INTO sessions(token_hash,user_id,station_id,last_charge_at,last_seen_at) VALUES(?,?,?,?,?)')
-        .run(tokenHash(token), user.id, deviceId, now, now);
+      this.db.prepare('INSERT INTO sessions(token_hash,user_id,station_id,last_charge_at,last_seen_at,started_at,charged_microcents) VALUES(?,?,?,?,?,?,0)')
+        .run(tokenHash(token), user.id, deviceId, now, now, now);
     });
     return token;
   }
@@ -95,25 +119,34 @@ class AccountDb {
   session(token, deviceId) {
     deviceId = validateDeviceId(deviceId);
     if (typeof token !== 'string' || token.length < 32) throw new Error('Login required.');
-    const row = this.db.prepare(`SELECT s.*,u.username,u.status,u.balance_microcents FROM sessions s
+    const row = this.db.prepare(`SELECT s.*,u.username,u.status,u.banned_at,u.balance_microcents FROM sessions s
       JOIN users u ON u.id=s.user_id WHERE s.token_hash=? AND s.station_id=?`)
       .get(tokenHash(token), deviceId);
-    if (!row || row.status !== 'approved' || Date.now() - row.last_seen_at > 5000) throw new Error('Login required.');
+    if (!row || row.status !== 'approved' || row.banned_at || Date.now() - row.last_seen_at > 5000) throw new Error('Login required.');
     return row;
   }
 
   charge(row, now = Date.now()) {
     const elapsed = Math.max(0, now - row.last_charge_at);
+    const denominator = BigInt(this.secondsPerPeso() * 1000);
     const numerator = row.balance_microcents > 0
-      ? BigInt(elapsed) * BigInt(RATE_CENTS_PER_HOUR) * 1_000_000n + BigInt(row.charge_remainder)
+      ? BigInt(elapsed) * 100_000_000n + BigInt(row.charge_remainder)
       : 0n;
-    const calculated = numerator / BigInt(DENOMINATOR);
+    const calculated = numerator / denominator;
     const spent = Number(calculated > BigInt(row.balance_microcents) ? BigInt(row.balance_microcents) : calculated);
     const remaining = Math.max(0, row.balance_microcents - spent);
     this.db.prepare('UPDATE users SET balance_microcents=? WHERE id=?').run(remaining, row.user_id);
-    this.db.prepare('UPDATE sessions SET last_charge_at=?,charge_remainder=? WHERE token_hash=?')
-      .run(now, Number(numerator % BigInt(DENOMINATOR)), row.token_hash);
+    this.db.prepare('UPDATE sessions SET last_charge_at=?,charge_remainder=?,charged_microcents=charged_microcents+? WHERE token_hash=?')
+      .run(now, Number(numerator % denominator), spent, row.token_hash);
     return remaining;
+  }
+
+  closeSession(row, reason, now = Date.now()) {
+    this.charge(row, now);
+    const current = this.db.prepare('SELECT charged_microcents,started_at FROM sessions WHERE token_hash=?').get(row.token_hash);
+    if (current) this.db.prepare(`INSERT INTO usage_history(user_id,station_id,started_at,ended_at,charged_microcents,end_reason)
+      VALUES(?,?,?,?,?,?)`).run(row.user_id, row.station_id, current.started_at || row.last_charge_at, now, current.charged_microcents, reason);
+    this.db.prepare('DELETE FROM sessions WHERE token_hash=?').run(row.token_hash);
   }
 
   status(token, deviceId) {
@@ -125,7 +158,7 @@ class AccountDb {
       return {
         username: row.username,
         balanceCents: Math.floor(balance / 1_000_000),
-        secondsRemaining: Number(BigInt(balance) * 3600n / (BigInt(RATE_CENTS_PER_HOUR) * 1_000_000n)),
+        secondsRemaining: Number(BigInt(balance) * BigInt(this.secondsPerPeso()) / 100_000_000n),
         accessAllowed: balance > 0,
         topups: this.db.prepare('SELECT id,amount_cents AS amountCents,status,created_at AS createdAt FROM topups WHERE user_id=? ORDER BY id DESC LIMIT 10').all(row.user_id)
       };
@@ -134,10 +167,7 @@ class AccountDb {
 
   logout(token, deviceId) {
     const row = this.session(token, deviceId);
-    this.transaction(() => {
-      this.charge(row);
-      this.db.prepare('DELETE FROM sessions WHERE token_hash=?').run(row.token_hash);
-    });
+    this.transaction(() => this.closeSession(row, 'customer_logout'));
   }
 
   requestTopup(token, deviceId, amountCents) {
@@ -168,28 +198,117 @@ class AccountDb {
     return { ok: true, name };
   }
 
+  setPricing(secondsPerPeso) {
+    if (!Number.isInteger(secondsPerPeso) || secondsPerPeso < 10 || secondsPerPeso > 86400) {
+      throw new Error('Time per PHP 1 must be between 10 seconds and 24 hours.');
+    }
+    this.transaction(() => {
+      for (const row of this.db.prepare('SELECT * FROM sessions').all()) {
+        const joined = this.sessionByHash(row.token_hash);
+        if (joined) this.charge(joined, joined.last_seen_at);
+      }
+      this.db.prepare("UPDATE settings SET value=? WHERE key='seconds_per_peso'").run(String(secondsPerPeso));
+      this.db.prepare('UPDATE sessions SET charge_remainder=0').run();
+    });
+    return { secondsPerPeso, rateCentsPerHour: this.rateCentsPerHour() };
+  }
+
+  directTopup(userId, amountCents) {
+    if (!Number.isInteger(userId) || userId < 1) throw new Error('Member not found.');
+    if (!Number.isInteger(amountCents) || amountCents < 100 || amountCents > 100000) throw new Error('Top-up must be between PHP 1 and PHP 1,000.');
+    this.transaction(() => {
+      const user = this.db.prepare('SELECT id FROM users WHERE id=?').get(userId);
+      if (!user) throw new Error('Member not found.');
+      const now = Date.now();
+      this.db.prepare("INSERT INTO topups(user_id,amount_cents,status,created_at,reviewed_at,source) VALUES(?,?,'approved',?,?,'admin')")
+        .run(userId, amountCents, now, now);
+      this.db.prepare('UPDATE users SET balance_microcents=balance_microcents+? WHERE id=?').run(amountCents * 1_000_000, userId);
+    });
+    return { ok: true };
+  }
+
+  updateMember(userId, username, password) {
+    if (!Number.isInteger(userId) || userId < 1) throw new Error('Member not found.');
+    username = String(username || '').trim();
+    if (!/^[a-zA-Z0-9_]{3,24}$/.test(username)) throw new Error('Username must be 3 to 24 letters, numbers, or underscores.');
+    if (password && (typeof password !== 'string' || password.length < 12 || password.length > 128)) throw new Error('Password must be 12 to 128 characters.');
+    try {
+      this.transaction(() => {
+        const result = password
+          ? (() => { const credentials = hashPin(password); return this.db.prepare('UPDATE users SET username=?,salt=?,password_hash=? WHERE id=?').run(username, credentials.salt, credentials.hash, userId); })()
+          : this.db.prepare('UPDATE users SET username=? WHERE id=?').run(username, userId);
+        if (result.changes !== 1) throw new Error('Member not found.');
+        if (password) {
+          const session = this.db.prepare('SELECT token_hash FROM sessions WHERE user_id=?').get(userId);
+          const row = session ? this.sessionByHash(session.token_hash) : null;
+          if (row) this.closeSession(row, 'password_changed', row.last_seen_at);
+        }
+      });
+    } catch (error) {
+      if (String(error.message).includes('UNIQUE')) throw new Error('Username is already taken.');
+      throw error;
+    }
+    return { ok: true };
+  }
+
+  setMemberBanned(userId, banned) {
+    if (!Number.isInteger(userId) || userId < 1) throw new Error('Member not found.');
+    this.transaction(() => {
+      const result = this.db.prepare('UPDATE users SET banned_at=? WHERE id=?').run(banned ? Date.now() : null, userId);
+      if (result.changes !== 1) throw new Error('Member not found.');
+      if (banned) {
+        const session = this.db.prepare('SELECT token_hash FROM sessions WHERE user_id=?').get(userId);
+        const row = session ? this.sessionByHash(session.token_hash) : null;
+        if (row) this.closeSession(row, 'account_banned', row.last_seen_at);
+      }
+    });
+    return { ok: true };
+  }
+
+  forceLogout(deviceId) {
+    deviceId = validateDeviceId(deviceId);
+    this.transaction(() => {
+      const session = this.db.prepare('SELECT token_hash FROM sessions WHERE station_id=?').get(deviceId);
+      const row = session ? this.sessionByHash(session.token_hash) : null;
+      if (!row) throw new Error('No active member on this client.');
+      this.closeSession(row, 'administrator_logout', row.last_seen_at);
+    });
+    return { ok: true };
+  }
+
   adminState() {
     this.transaction(() => {
       const rows = this.db.prepare('SELECT * FROM sessions').all();
       for (const row of rows) {
         const joined = this.sessionByHash(row.token_hash);
         if (!joined) continue;
-        const cutoff = row.last_seen_at + 5000;
-        this.charge(joined, Math.min(Date.now(), cutoff));
-        if (Date.now() > cutoff) this.db.prepare('DELETE FROM sessions WHERE token_hash=?').run(row.token_hash);
+        if (Date.now() - row.last_seen_at > 5000) {
+          this.closeSession(joined, 'connection_lost', row.last_seen_at);
+        }
       }
     });
     return {
-      accounts: this.db.prepare('SELECT id,username,status,balance_microcents AS balanceMicrocents,created_at AS createdAt FROM users ORDER BY id DESC').all(),
+      pricing: { secondsPerPeso: this.secondsPerPeso(), rateCentsPerHour: this.rateCentsPerHour() },
+      sales: {
+        allTimeCents: this.db.prepare("SELECT COALESCE(SUM(amount_cents),0) AS total FROM topups WHERE status='approved'").get().total,
+        todayCents: this.db.prepare("SELECT COALESCE(SUM(amount_cents),0) AS total FROM topups WHERE status='approved' AND reviewed_at>=?").get(new Date().setHours(0, 0, 0, 0)).total,
+        recent: this.db.prepare(`SELECT t.id,t.amount_cents AS amountCents,t.reviewed_at AS reviewedAt,t.source,u.username
+          FROM topups t JOIN users u ON u.id=t.user_id WHERE t.status='approved' ORDER BY t.reviewed_at DESC LIMIT 30`).all()
+      },
+      accounts: this.db.prepare('SELECT id,username,status,banned_at AS bannedAt,balance_microcents AS balanceMicrocents,created_at AS createdAt FROM users ORDER BY username COLLATE NOCASE').all(),
       connectedStations: this.db.prepare('SELECT station_id AS deviceId,name FROM workstations WHERE last_seen_at>? ORDER BY name,station_id').all(Date.now() - 5000),
       topupRequests: this.db.prepare(`SELECT t.id,t.amount_cents AS amountCents,t.created_at AS createdAt,u.username
         FROM topups t JOIN users u ON u.id=t.user_id WHERE t.status='pending' ORDER BY t.id`).all(),
-      sessions: this.db.prepare('SELECT s.station_id AS deviceId,u.username,u.balance_microcents AS balanceMicrocents FROM sessions s JOIN users u ON u.id=s.user_id').all()
+      sessions: this.db.prepare('SELECT s.station_id AS deviceId,s.started_at AS startedAt,s.charged_microcents AS chargedMicrocents,u.id AS userId,u.username,u.balance_microcents AS balanceMicrocents FROM sessions s JOIN users u ON u.id=s.user_id').all(),
+      usageHistory: this.db.prepare(`SELECT h.id,h.station_id AS deviceId,h.started_at AS startedAt,h.ended_at AS endedAt,
+        h.charged_microcents AS chargedMicrocents,h.end_reason AS endReason,u.username,w.name AS workstationName
+        FROM usage_history h JOIN users u ON u.id=h.user_id LEFT JOIN workstations w ON w.station_id=h.station_id
+        ORDER BY h.ended_at DESC LIMIT 50`).all()
     };
   }
 
   sessionByHash(hash) {
-    return this.db.prepare('SELECT s.*,u.username,u.status,u.balance_microcents FROM sessions s JOIN users u ON u.id=s.user_id WHERE s.token_hash=?').get(hash);
+    return this.db.prepare('SELECT s.*,u.username,u.status,u.banned_at,u.balance_microcents FROM sessions s JOIN users u ON u.id=s.user_id WHERE s.token_hash=?').get(hash);
   }
 
   reviewAccount(id, approve) {

@@ -11,7 +11,7 @@ npm.cmd install
 npm.cmd start
 ```
 
-In the packaged app, choose **Server / cashier** on first launch. Change the initial administrator PIN (`2468`) to a private 6 to 12 digit PIN. The cashier console then shows the LAN IP address and fixed port `46321`. Keep the cashier Windows account private. Allow inbound TCP port `46321` on the cashier PC's LAN firewall only for the workstation network.
+In the packaged app, choose **Server / cashier** on first launch. Change the initial administrator PIN (`2468`) to a private 6 to 12 digit PIN. The cashier console then shows the physical LAN IP address and fixed port `46321`; virtual Hyper-V, VPN, and VM adapter addresses are hidden when a physical adapter is available. Keep the cashier Windows account private. Allow inbound TCP port `46321` on the cashier PC's LAN firewall only for the workstation network.
 
 On each workstation PC, install the same package and choose **Client / workstation** on first launch. The app creates its device ID automatically. For development, a fixed test device ID can be supplied with:
 
@@ -26,10 +26,20 @@ The first screen asks only for the cashier server IPv4 address. On the first suc
 1. The client offers **Create account** or **Log in** after server setup. A username has 3 to 24 letters, digits, or underscores; passwords have 12 to 128 characters.
 2. New accounts are pending. The cashier approves or rejects each account in **Account approvals**. Passwords are salted scrypt hashes in the server database and are never shown to the cashier.
 3. An approved customer can log in. If their balance is zero, the client stays on its lock screen and shows a **Request top-up** button. The cashier approves or rejects the request. Approval adds balance once.
-4. Positive balance unlocks the desktop and shows the remaining time and balance in the always-on-top client timer. The current rate is PHP 30 per hour. The server charges time from the account balance; a successful top-up extends the remaining time.
-5. Logging out, using all balance, losing the server connection, or restarting the client returns to the lock screen. One account can have one active workstation session at a time.
+4. Positive balance unlocks the desktop and shows the remaining time and balance in the always-on-top client timer. The cashier configures one global number of minutes per PHP 1. The server charges time from the account balance; a successful top-up extends the remaining time.
+5. Logging out, using all balance, losing the server connection, or restarting the client returns to the lock screen. One account can have one active workstation session at a time. Billing advances only on an authenticated client heartbeat. If the app closes, the PC loses power, or the network disconnects without a proper logout, billing stops at the last confirmed heartbeat and the stale session is closed after five seconds.
 
-The cashier dashboard shows only clients that successfully contact the server and have sent a heartbeat within the last five seconds, including clients at the login screen. The cashier can rename a connected client; that name remains in the server database. The dashboard also shows account balances, pending accounts, pending top-ups, and server connection details. A disconnected PC disappears from the workstation list. No payment processor is connected: a top-up approval records a cashier-confirmed credit, not an automatic payment.
+The cashier dashboard shows only clients that successfully contact the server and have sent a heartbeat within the last five seconds, including clients at the login screen. The cashier can rename a connected client; that name remains in the server database. A disconnected PC disappears from the workstation list.
+
+From the server dashboard, an authorized cashier can:
+
+- Configure the global time per PHP 1. Active sessions are charged at the old rate up to the change and at the new rate afterward.
+- View today's and all-time approved top-up sales, plus a recent sales list.
+- Add balance directly to a member or approve a client top-up request.
+- Log out an active client and review completed CafeTimer usage sessions with member, workstation, duration, charge, and logout reason.
+- View members, change usernames, set a new password, and ban or unban accounts. Changing a password or banning an account closes its active session immediately.
+
+Passwords are never displayed. Usage history contains CafeTimer session records only; it does not capture screens, applications, files, or keystrokes. No payment processor is connected: an approved top-up records a cashier-confirmed credit, not an automatic payment.
 
 ## Storage and security
 
@@ -45,7 +55,7 @@ Credentials and session tokens travel through the Electron main process over HTT
 
 Packaged server and client installations check for a newer release shortly after launch and every six hours. A visible prompt offers to download the update, shows progress, and then offers **Restart and install**. Both roles use the same release because they come from one installer.
 
-Push a version tag such as `v1.1.0` to the GitHub repository. The workflow in `.github/workflows/release.yml` runs the tests, builds the NSIS installer, publishes the GitHub Release, and uploads the `latest.yml` update metadata used by installed copies. Increase the `version` in `package.json` before creating the tag. The repository must be public for clients to update without storing a GitHub token on each PC.
+Push a version tag such as `v1.2.0` to the GitHub repository. The workflow in `.github/workflows/release.yml` runs the tests, builds the NSIS installer, publishes the GitHub Release, and uploads the `latest.yml` update metadata used by installed copies. Increase the `version` in `package.json` before creating the tag. The repository must be public for clients to update without storing a GitHub token on each PC.
 
 An Electron overlay cannot guarantee that a customer cannot reach Windows controls. Deploy clients under a dedicated Windows standard user account with OS-enforced app allowlisting or a supported custom shell. Test keyboard shortcuts, Task Manager, sign-out, multi-monitor behavior, and recovery on a spare device. Windows Assigned Access and Shell Launcher have different capabilities and cannot be configured together. See Microsoft's [kiosk options](https://learn.microsoft.com/windows/configuration/kiosk/), [Assigned Access recommendations](https://learn.microsoft.com/windows/configuration/assigned-access/recommendations), and [Shell Launcher documentation](https://learn.microsoft.com/windows/configuration/shell-launcher/).
 

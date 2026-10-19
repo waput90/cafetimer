@@ -58,8 +58,52 @@ test('stale client sessions stop charging and disappear', () => {
   const token = db.login('offline_user', 'long-test-password', 'PC-01');
   db.requestTopup(token, 'PC-01', 1000);
   db.reviewTopup(db.adminState().topupRequests[0].id, true);
-  db.db.prepare('UPDATE sessions SET last_seen_at=?,last_charge_at=?').run(Date.now() - 10000, Date.now() - 10000);
+  db.status(token, 'PC-01');
+  const balanceAtLastHeartbeat = db.adminState().accounts[0].balanceMicrocents;
+
+  const recentHeartbeat = Date.now() - 1000;
+  db.db.prepare('UPDATE sessions SET last_seen_at=?,last_charge_at=?').run(recentHeartbeat, recentHeartbeat);
+  assert.equal(db.adminState().accounts[0].balanceMicrocents, balanceAtLastHeartbeat);
+  assert.equal(db.adminState().sessions.length, 1);
+
+  const lastHeartbeat = Date.now() - 10000;
+  db.db.prepare('UPDATE sessions SET last_seen_at=?,last_charge_at=?').run(lastHeartbeat, lastHeartbeat);
   db.adminState();
-  assert.equal(db.adminState().sessions.length, 0);
+  const state = db.adminState();
+  assert.equal(state.accounts[0].balanceMicrocents, balanceAtLastHeartbeat);
+  assert.equal(state.sessions.length, 0);
+  assert.equal(state.usageHistory[0].endedAt, lastHeartbeat);
+  assert.equal(state.usageHistory[0].endReason, 'connection_lost');
   assert.throws(() => db.status(token, 'PC-01'), /Login required/);
+});
+
+test('admin pricing, sales, member management, forced logout, and usage history', () => {
+  const db = new AccountDb(':memory:');
+  db.register('member_one', 'original-password');
+  const userId = db.adminState().accounts[0].id;
+  db.reviewAccount(userId, true);
+  db.directTopup(userId, 1000);
+  assert.equal(db.adminState().sales.allTimeCents, 1000);
+  assert.equal(db.adminState().sales.todayCents, 1000);
+  assert.equal(db.adminState().sales.recent[0].source, 'admin');
+
+  db.setPricing(60);
+  assert.deepEqual(db.adminState().pricing, { secondsPerPeso: 60, rateCentsPerHour: 6000 });
+  let token = db.login('member_one', 'original-password', 'device-admin-test');
+  assert.ok(db.status(token, 'device-admin-test').secondsRemaining <= 600);
+  db.forceLogout('device-admin-test');
+  assert.throws(() => db.status(token, 'device-admin-test'), /Login required/);
+  assert.equal(db.adminState().usageHistory[0].endReason, 'administrator_logout');
+
+  token = db.login('member_one', 'original-password', 'device-admin-test');
+  db.updateMember(userId, 'renamed_member', 'replacement-password');
+  assert.throws(() => db.status(token, 'device-admin-test'), /Login required/);
+  assert.equal(db.adminState().usageHistory[0].endReason, 'password_changed');
+  assert.throws(() => db.login('member_one', 'original-password', 'device-admin-test'), /Invalid/);
+  token = db.login('renamed_member', 'replacement-password', 'device-admin-test');
+  db.setMemberBanned(userId, true);
+  assert.throws(() => db.status(token, 'device-admin-test'), /Login required/);
+  assert.throws(() => db.login('renamed_member', 'replacement-password', 'device-admin-test'), /banned/);
+  db.setMemberBanned(userId, false);
+  assert.doesNotThrow(() => db.login('renamed_member', 'replacement-password', 'device-admin-test'));
 });

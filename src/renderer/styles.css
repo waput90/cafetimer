@@ -102,7 +102,7 @@ button:focus-visible, input:focus-visible { outline: 2px solid var(--green); out
 .dialog h2 { margin: 0; font-size: 22px; }
 .icon-button { width: 34px; height: 34px; border: 1px solid var(--line); border-radius: 9px; background: var(--panel-2); color: var(--muted); cursor: pointer; }
 .dialog label:not(.toggle-row) { display: grid; gap: 8px; color: #bbc5c2; font-size: 12px; font-weight: 650; }
-.dialog input[type="text"], .dialog input[type="password"] { width: 100%; padding: 12px 13px; border: 1px solid var(--line); border-radius: 9px; background: #0a1110; color: var(--text); }
+.dialog input[type="text"], .dialog input[type="password"], .dialog input[type="number"] { width: 100%; padding: 12px 13px; border: 1px solid var(--line); border-radius: 9px; background: #0a1110; color: var(--text); }
 .duration-label { display: flex; justify-content: space-between; margin-top: 20px; color: #bbc5c2; font-size: 12px; }
 .duration-label strong { color: var(--green); }
 input[type="range"] { width: 100%; accent-color: var(--green); }
@@ -151,6 +151,22 @@ input[type="range"] { width: 100%; accent-color: var(--green); }
 .request-row button { margin-left: 5px; padding: 6px 8px; border: 1px solid var(--line); border-radius: 7px; background: var(--panel-2); cursor: pointer; }
 .account-list { display: flex; flex-wrap: wrap; gap: 8px; font-size: 12px; }
 .account-list span { padding: 6px 9px; border-radius: 7px; background: var(--panel-2); }
+.inline-form { display: flex; align-items: end; gap: 10px; }
+.inline-form label { display: grid; flex: 1; gap: 6px; color: var(--muted); font-size: 11px; }
+.inline-form input { width: 100%; padding: 10px; border: 1px solid var(--line); border-radius: 8px; background: #0a1110; color: var(--text); }
+.sales-total { margin: 4px 0; color: var(--green); font-size: 28px !important; font-weight: 800; }
+.admin-table { display: grid; gap: 8px; }
+.member-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 10px; border: 1px solid var(--line); border-radius: 9px; background: var(--panel-2); }
+.member-row b, .member-row small { display: block; }
+.member-row small { margin-top: 4px; color: var(--muted); font-size: 10px; }
+.row-actions { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 6px; }
+.row-actions button { padding: 6px 8px; border: 1px solid var(--line); border-radius: 7px; background: #192522; font-size: 10px; cursor: pointer; }
+.row-actions .danger { color: var(--red); }
+.report-grid { display: grid; grid-template-columns: repeat(2,minmax(0,1fr)); gap: 16px; }
+.compact-list { display: grid; gap: 7px; max-height: 260px; overflow: auto; }
+.compact-list > span { padding: 9px; border-radius: 8px; background: var(--panel-2); font-size: 11px; }
+.compact-list b, .compact-list small { display: block; }
+.compact-list small { margin-top: 4px; color: var(--muted); font-size: 10px; }
 #topup-form label { margin-top: 16px; }
 #topup-form input { width: 100%; padding: 12px; border: 1px solid var(--line); border-radius: 9px; background: #0a1110; color: var(--text); }
 
@@ -168,9 +184,11 @@ input[type="range"] { width: 100%; accent-color: var(--green); }
   .station-grid { grid-template-columns: repeat(3, minmax(170px, 1fr)); }
 }
 @media (max-width: 900px) {
-  .admin-requests { grid-template-columns: 1fr; }
+  .admin-requests, .report-grid { grid-template-columns: 1fr; }
   .sidebar { display: none; }
   .app-shell { grid-template-columns: 1fr; }
   .station-grid { grid-template-columns: repeat(2, minmax(180px, 1fr)); }
   .stats { grid-template-columns: repeat(2, 1fr); }
+  .member-row { align-items: flex-start; flex-direction: column; }
+  .row-actions { justify-content: flex-start; }
 }
