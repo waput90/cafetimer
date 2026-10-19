@@ -10,8 +10,7 @@
     "start:client": "electron . --client=device-development-01",
     "test": "node --test",
     "build": "electron-builder --win nsis",
-    "build:dir": "electron-builder --dir",
-    "release:github": "node scripts/release-github.js"
+    "build:dir": "electron-builder --dir"
   },
   "devDependencies": {
     "electron": "^44.7.0",
@@ -24,6 +23,12 @@
     "npmRebuild": false,
     "directories": {
       "output": "dist"
+    },
+    "artifactName": "${productName}-Setup-${version}.${ext}",
+    "publish": {
+      "provider": "github",
+      "owner": "waput90",
+      "repo": "cafetimer"
     },
     "files": [
       "src/**/*",

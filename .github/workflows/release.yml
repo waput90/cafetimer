@@ -3,7 +3,7 @@ name: Release CafeTimer
 on:
   push:
     tags:
-      - 'v*'
+      - 'v[0-9]*'
 
 permissions:
   contents: write
@@ -13,13 +13,41 @@ jobs:
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
       - uses: actions/setup-node@v4
         with:
           node-version: 24
           cache: npm
-      - run: npm ci
-      - run: npm test
-      - run: npm run release:github
+      - name: Install dependencies
+        run: npm ci
+      - name: Validate release tag
+        shell: pwsh
+        env:
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: |
+          $version = node -p "require('./package.json').version"
+          $expectedTag = "v$version"
+          if ($env:RELEASE_TAG -cne $expectedTag) {
+            throw "Release tag '$env:RELEASE_TAG' must exactly match package version '$expectedTag'. Use v1.2.0, without a dot after v."
+          }
+      - name: Run tests
+        run: npm test
+      - name: Build Windows installer
+        run: npm run build
+      - name: Publish GitHub release
+        shell: pwsh
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GITHUB_REPOSITORY: ${{ github.repository }}
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: |
+          $version = node -p "require('./package.json').version"
+          gh release create $env:RELEASE_TAG `
+            "dist/CafeTimer-Setup-$version.exe" `
+            "dist/CafeTimer-Setup-$version.exe.blockmap" `
+            "dist/latest.yml" `
+            --repo $env:GITHUB_REPOSITORY `
+            --verify-tag `
+            --generate-notes `
+            --latest
