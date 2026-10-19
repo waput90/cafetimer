@@ -1,3 +1,6 @@
+// @ts-nocheck
+import './styles.css';
+
 const appElement = document.querySelector('#app');
 const sessionDialog = document.querySelector('#session-dialog');
 const pinDialog = document.querySelector('#pin-dialog');
@@ -15,10 +18,43 @@ let server = null;
 let clientFormMode = 'login';
 let clientSetupMode = false;
 let updateState = null;
+let adminView = 'dashboard';
+let renderedAdminView = null;
+const adminScrollPositions = { dashboard: 0, workstations: 0, members: 0, reports: 0, settings: 0 };
 
 function money(cents) { return `PHP ${(Number(cents || 0) / 100).toFixed(2)}`; }
 function shortDate(value) { return value ? new Date(value).toLocaleString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' }) : '-'; }
 function durationBetween(start, end) { return formatTime(Math.floor(Math.max(0, end - start) / 1000)); }
+
+function localDateKey(value) {
+  const date = new Date(value);
+  return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
+}
+
+function lastSevenSales(rows = []) {
+  const byDay = new Map(rows.map((row) => [row.day, row]));
+  return Array.from({ length: 7 }, (_, index) => {
+    const date = new Date();
+    date.setHours(0, 0, 0, 0);
+    date.setDate(date.getDate() - (6 - index));
+    const row = byDay.get(localDateKey(date));
+    return {
+      label: date.toLocaleDateString([], { weekday: 'short' }),
+      value: Number(row?.amountCents || 0),
+      display: money(row?.amountCents || 0),
+      detail: `${Number(row?.transactions || 0)} sale${Number(row?.transactions || 0) === 1 ? '' : 's'}`
+    };
+  });
+}
+
+function chartRows(items) {
+  const maximum = Math.max(1, ...items.map((item) => Number(item.value || 0)));
+  return `<div class="chart-rows">${items.map((item) => `<div class="chart-row">
+    <span class="chart-label">${escapeHtml(item.label)}</span>
+    <meter min="0" max="${maximum}" value="${Math.max(0, Number(item.value || 0))}"></meter>
+    <span class="chart-value"><b>${escapeHtml(item.display)}</b><small>${escapeHtml(item.detail || '')}</small></span>
+  </div>`).join('')}</div>`;
+}
 
 function renderRoleSetup() {
   if (lastClientViewKey === 'role') return;
@@ -102,7 +138,7 @@ function stationActions(station) {
   return `${extend}<button data-action="${pauseAction}" data-station="${station.id}">${pauseLabel}</button><button class="danger" data-action="stop" data-station="${station.id}">End</button>`;
 }
 
-function renderAdmin() {
+function renderAdminLegacy() {
   if (!adminAuthorized) {
     const viewKey = String(state.pinChanged);
     if (viewKey === lastAdminViewKey) return;
@@ -187,6 +223,104 @@ function renderAdmin() {
         <div class="security-card"><strong>Protected client mode</strong><p>${state.pinChanged ? 'Administrator PIN configured.' : 'Change the initial PIN before client exit is enabled.'}</p><button class="secondary" data-action="change-pin">Change PIN</button> <button class="secondary" data-action="security-info">Deployment guide</button></div>
       </aside>
     </div>`;
+}
+
+function renderAdmin() {
+  if (!adminAuthorized) {
+    const viewKey = String(state.pinChanged);
+    if (viewKey === lastAdminViewKey) return;
+    lastAdminViewKey = viewKey;
+    renderedAdminView = null;
+    appElement.innerHTML = `<main class="client-lock"><section class="lock-card">
+      <div class="lock-logo">C</div><p class="eyebrow">CASHIER CONSOLE</p><h1>${state.pinChanged ? 'Cashier login' : 'Set administrator PIN'}</h1>
+      <p class="help">${state.pinChanged ? 'Enter the administrator PIN to manage workstations.' : 'Change the initial PIN before the console can control workstations.'}</p>
+      ${state.pinChanged ? '<form id="admin-login-form" class="client-login-form"><label for="cashier-pin">Administrator PIN</label><input id="cashier-pin" type="password" inputmode="numeric" maxlength="12" autocomplete="off" required><p id="admin-login-error" class="error" role="alert"></p><button class="primary" type="submit">Log in</button></form>' : '<button class="primary" data-action="change-pin">Change PIN</button>'}
+    </section></main>`;
+    return;
+  }
+
+  if (renderedAdminView === adminView && document.activeElement?.closest('.main')
+    && document.activeElement.matches('input, select, textarea')) return;
+  lastAdminViewKey = null;
+  const previousMain = appElement.querySelector('.main');
+  if (previousMain && renderedAdminView) adminScrollPositions[renderedAdminView] = previousMain.scrollTop;
+  const stations = (state.connectedStations || []).map(({ deviceId, name }) => {
+    const station = { id: deviceId, name: name || 'New client' };
+    const current = (state.sessions || []).find((session) => session.deviceId === deviceId);
+    return current ? { ...station, status: current.balanceMicrocents > 0 ? 'active' : 'expired',
+      userId: current.userId, customer: current.username,
+      remainingSeconds: Math.floor(current.balanceMicrocents * (state.pricing?.secondsPerPeso || 120) / 100_000_000) } :
+      { ...station, status: 'available', customer: null };
+  });
+  const active = stations.filter((station) => station.status === 'active').length;
+  const available = stations.filter((station) => station.status === 'available').length;
+  const pendingAccounts = (state.accounts || []).filter((account) => account.status === 'pending').length;
+  const approvedAccounts = (state.accounts || []).filter((account) => account.status === 'approved' && !account.bannedAt).length;
+  const bannedAccounts = (state.accounts || []).filter((account) => account.bannedAt).length;
+  const today = new Intl.DateTimeFormat(undefined, { weekday: 'long', month: 'long', day: 'numeric' }).format(new Date());
+  const now = new Intl.DateTimeFormat(undefined, { hour: '2-digit', minute: '2-digit', second: '2-digit' }).format(new Date());
+  const pageDetails = {
+    dashboard: ['LIVE OPERATIONS', 'Cafe overview', 'Approvals, requests, and current activity across your cafe.'],
+    workstations: ['CLIENT MANAGEMENT', 'Workstations', 'Monitor and control every client currently connected to this server.'],
+    members: ['ACCOUNT MANAGEMENT', 'Members', 'Approve accounts, manage balances, credentials, access, and active logins.'],
+    reports: ['BUSINESS INSIGHTS', 'Reports', 'Review sales performance and workstation usage.'],
+    settings: ['SERVER CONFIGURATION', 'Settings', 'Configure global pricing, server startup, and administrator security.']
+  };
+  const [eyebrow, heading, description] = pageDetails[adminView] || pageDetails.dashboard;
+  const stats = (items) => `<section class="stats" aria-label="${escapeHtml(heading)} statistics">${items.map((item) => `<div class="stat"><span class="stat-label">${escapeHtml(item.label)}</span><strong class="stat-value ${item.tone || ''}">${escapeHtml(item.value)}</strong></div>`).join('')}</section>`;
+  const stationGrid = `<div class="section-heading"><h2>Connected workstation floor</h2><div class="legend"><span class="available">Available</span><span class="active">In use</span></div></div>
+    <section class="station-grid">${stations.map((station) => `<article class="station ${station.status}">
+      <div class="station-head"><div><h3 class="station-id">${escapeHtml(station.name)}</h3><div class="station-name">${escapeHtml(station.id)}</div></div><span class="status-dot"></span></div>
+      <div class="timer">${stationTimer(station)}</div>
+      <div class="customer">${escapeHtml(station.customer || (station.status === 'expired' ? 'Time expired' : 'No active customer'))}</div>
+      <div class="customer">${station.status === 'active' ? 'Logged in' : 'Waiting for approved account'}</div>
+      <div class="station-actions"><button class="secondary" data-action="rename-client" data-device="${station.id}" data-name="${escapeHtml(station.name)}">Rename</button>${station.customer ? `<button class="danger" data-action="force-logout" data-device="${station.id}">Log out</button>` : ''}</div>
+    </article>`).join('') || '<p class="empty-state">No workstations connected. Configure a client with this server IP.</p>'}</section>`;
+  const memberTable = `<section class="server-card feature-card"><div class="card-heading"><div><p class="eyebrow">DIRECTORY</p><h2>All members</h2></div><span class="count-pill">${(state.accounts || []).length} accounts</span></div><div class="admin-table">${(state.accounts || []).map((account) => {
+    const activeSession = (state.sessions || []).find((session) => session.userId === account.id);
+    return `<article class="member-row"><div><b>${escapeHtml(account.username)}</b><small>${account.bannedAt ? 'Banned' : escapeHtml(account.status)} · ${money(Math.floor(account.balanceMicrocents / 1_000_000))}${activeSession ? ' · Online' : ''}</small></div><div class="row-actions">
+      <button data-action="member-topup" data-id="${account.id}" data-name="${escapeHtml(account.username)}">Top up</button><button data-action="edit-member" data-id="${account.id}" data-name="${escapeHtml(account.username)}">Edit</button>
+      <button data-action="toggle-ban" data-id="${account.id}" data-banned="${account.bannedAt ? 'true' : 'false'}">${account.bannedAt ? 'Unban' : 'Ban'}</button>${activeSession ? `<button class="danger" data-action="force-logout" data-device="${activeSession.deviceId}">Log out</button>` : ''}
+    </div></article>`;
+  }).join('') || '<p class="empty-state">No members yet.</p>'}</div></section>`;
+  const recentSales = (state.sales?.recent || []).map((sale) => `<span><b>${money(sale.amountCents)}</b> ${escapeHtml(sale.username)}<small>${sale.source === 'admin' ? 'Cashier top-up' : 'Approved request'} · ${shortDate(sale.reviewedAt)}</small></span>`).join('') || '<p class="empty-state">No sales recorded.</p>';
+  const usageHistory = (state.usageHistory || []).map((item) => `<span><b>${escapeHtml(item.username)}</b> on ${escapeHtml(item.workstationName || item.deviceId)}<small>${durationBetween(item.startedAt, item.endedAt)} · ${money(Math.floor(item.chargedMicrocents / 1_000_000))} · ${escapeHtml(item.endReason.replaceAll('_', ' '))}</small></span>`).join('') || '<p class="empty-state">No completed sessions.</p>';
+  let pageContent;
+
+  if (adminView === 'dashboard') {
+    pageContent = `${stats([{ label: 'Active sessions', value: String(active), tone: 'green' }, { label: 'Available PCs', value: String(available) }, { label: 'Pending accounts', value: String(pendingAccounts), tone: 'yellow' }, { label: 'Sales today', value: money(state.sales?.todayCents) }])}
+      <section class="server-card server-address"><div><strong>Server ready for workstations</strong><p>Enter ${(server?.addresses || []).map(escapeHtml).join(', ') || 'No LAN address'} and port ${server?.port || ''} on each client.</p></div><span class="online-pill">Online</span></section>
+      <section class="admin-requests"><div><h2>Top-up requests</h2>${(state.topupRequests || []).map((request) => `<article class="request-row"><strong>${escapeHtml(request.username)} · ${money(request.amountCents)}</strong><div><button data-action="approve-topup" data-id="${request.id}">Approve</button><button data-action="reject-topup" data-id="${request.id}">Reject</button></div></article>`).join('') || '<p class="empty-state">No pending top-ups.</p>'}</div>
+      <div><h2>Attention needed</h2><div class="attention-grid"><button data-action="admin-view" data-view="members"><b>${pendingAccounts}</b><span>accounts awaiting approval</span></button><button data-action="admin-view" data-view="workstations"><b>${stations.length}</b><span>clients connected now</span></button></div></div></section>`;
+  } else if (adminView === 'workstations') {
+    pageContent = `${stats([{ label: 'Connected', value: String(stations.length), tone: 'green' }, { label: 'In use', value: String(active) }, { label: 'Available', value: String(available) }, { label: 'Disconnected', value: 'Hidden' }])}${stationGrid}`;
+  } else if (adminView === 'members') {
+    pageContent = `${stats([{ label: 'Total members', value: String((state.accounts || []).length), tone: 'green' }, { label: 'Approved', value: String(approvedAccounts) }, { label: 'Pending', value: String(pendingAccounts), tone: 'yellow' }, { label: 'Banned', value: String(bannedAccounts) }])}
+      <section class="server-card feature-card"><div class="card-heading"><div><p class="eyebrow">REVIEW QUEUE</p><h2>Account approvals</h2></div></div>${(state.accounts || []).filter((account) => account.status === 'pending').map((account) => `<article class="request-row"><strong>${escapeHtml(account.username)}</strong><div><button data-action="approve-account" data-id="${account.id}">Approve</button><button data-action="reject-account" data-id="${account.id}">Reject</button></div></article>`).join('') || '<p class="empty-state">No pending accounts.</p>'}</section>${memberTable}`;
+  } else if (adminView === 'reports') {
+    const averageSale = state.sales?.transactionCount ? Math.round(state.sales.allTimeCents / state.sales.transactionCount) : 0;
+    const salesChart = chartRows(lastSevenSales(state.sales?.daily));
+    const usageItems = (state.usageByWorkstation || []).map((item) => ({ label: item.workstationName || item.deviceId, value: Math.round(Number(item.durationMs || 0) / 60000), display: formatTime(Math.floor(Number(item.durationMs || 0) / 1000)), detail: `${item.sessions} session${item.sessions === 1 ? '' : 's'}` }));
+    pageContent = `${stats([{ label: 'Sales today', value: money(state.sales?.todayCents), tone: 'green' }, { label: 'All-time sales', value: money(state.sales?.allTimeCents) }, { label: 'Average top-up', value: money(averageSale) }, { label: 'Completed sessions', value: String(state.usageSummary?.totalSessions || 0) }])}
+      <section class="chart-grid"><article class="chart-card"><div class="card-heading"><div><p class="eyebrow">LAST 7 DAYS</p><h2>Sales performance</h2></div><span class="chart-accent">${money(state.sales?.todayCents)}</span></div>${salesChart}</article>
+      <article class="chart-card"><div class="card-heading"><div><p class="eyebrow">ALL RECORDED TIME</p><h2>Workstation usage</h2></div><span class="chart-accent">${usageItems.length} PCs</span></div>${usageItems.length ? chartRows(usageItems) : '<p class="empty-state">No completed sessions.</p>'}</article></section>
+      <section class="report-grid"><div class="server-card"><strong>Recent sales</strong><div class="compact-list">${recentSales}</div></div><div class="server-card"><strong>Session history</strong><div class="compact-list">${usageHistory}</div></div></section>`;
+  } else {
+    pageContent = `<section class="settings-grid"><article class="settings-card"><p class="eyebrow">BILLING</p><h2>Global timer pricing</h2><p>Set how many minutes every member receives for PHP 1.</p>
+      <form id="pricing-form" class="settings-form"><label>Minutes per PHP 1 <input name="minutesPerPeso" type="number" min="0.1667" max="1440" step="0.0167" value="${((state.pricing?.secondsPerPeso || 120) / 60).toFixed(2)}" required></label><button class="primary">Save global rate</button></form><div class="setting-summary"><span>Equivalent hourly rate</span><strong>${money(state.pricing?.rateCentsPerHour)}</strong></div></article>
+      <article class="settings-card"><p class="eyebrow">SERVER</p><h2>Workstation connection</h2><p>Use this address only on your trusted cafe network.</p><div class="connection-value">${(server?.addresses || []).map(escapeHtml).join(', ') || 'No LAN address'}<small>Port ${server?.port || ''}</small></div><p class="muted">The server certificate is pinned automatically after first setup.</p></article>
+      <article class="settings-card"><p class="eyebrow">STARTUP</p><h2>Launch behavior</h2><p>Start the cashier server automatically when its Windows account signs in.</p><button class="secondary setting-button" data-action="toggle-launch-at-login" data-enabled="${state.settings?.launchAtLogin ? 'true' : 'false'}">${state.settings?.launchAtLogin ? 'Disable launch at login' : 'Enable launch at login'}</button></article>
+      <article class="settings-card"><p class="eyebrow">SECURITY</p><h2>Administrator access</h2><p>${state.pinChanged ? 'The administrator PIN is configured.' : 'Change the initial PIN before managing client recovery.'}</p><div class="settings-actions"><button class="secondary" data-action="change-pin">Change PIN</button><button class="secondary" data-action="security-info">Deployment guide</button></div></article></section>`;
+  }
+
+  const navigation = [['dashboard', '&#9673;', 'Dashboard'], ['workstations', '&#9638;', 'Workstations'], ['members', '&#9679;', 'Members'], ['reports', '&#9637;', 'Reports'], ['settings', '&#9881;', 'Settings']]
+    .map(([view, icon, label]) => `<button class="${adminView === view ? 'active' : ''}" data-action="admin-view" data-view="${view}"><span class="nav-icon">${icon}</span>${label}</button>`).join('');
+  const activityPanel = adminView === 'dashboard' ? `<aside class="activity-panel"><p class="eyebrow">SYSTEM LOG</p><h2>Recent activity</h2><div class="activity-list">${(state.activity || []).map((item) => `<div class="activity-item"><p>${escapeHtml(item.text)}</p><time>${new Date(item.at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</time></div>`).join('')}</div><div class="security-card"><strong>Protected client mode</strong><p>${state.pinChanged ? 'Administrator PIN configured.' : 'Change the initial PIN before client exit is enabled.'}</p><button class="secondary" data-action="change-pin">Change PIN</button> <button class="secondary" data-action="security-info">Deployment guide</button></div></aside>` : '';
+  appElement.innerHTML = `<div class="app-shell ${adminView === 'dashboard' ? '' : 'focused-view'}"><aside class="sidebar"><div class="brand"><div class="brand-mark">C</div><div><strong>${escapeHtml(state.cafeName)}</strong><small>CONTROL CENTER</small></div></div><nav class="nav" aria-label="Main navigation">${navigation}</nav><div class="sidebar-footer"><div class="connection"><span class="pulse"></span> LAN server online</div><small>${stations.length} clients connected</small><button class="secondary" data-action="admin-logout">Log out</button></div></aside>
+    <main class="main" data-admin-view="${adminView}"><header class="topbar"><div><p class="eyebrow">${escapeHtml(eyebrow)}</p><h1>${escapeHtml(heading)}</h1><p>${escapeHtml(description)}</p></div><div class="clock"><strong>${now}</strong><small>${today}</small></div></header>${pageContent}</main>${activityPanel}</div>`;
+  renderedAdminView = adminView;
+  const nextMain = appElement.querySelector('.main');
+  if (nextMain) nextMain.scrollTop = adminScrollPositions[adminView] || 0;
 }
 
 function renderNetworkClient() {
@@ -337,6 +471,14 @@ appElement.addEventListener('click', (event) => {
   if (!button) return;
   const action = button.dataset.action;
   const stationId = button.dataset.station;
+  if (action === 'admin-view') {
+    const nextView = button.dataset.view;
+    if (['dashboard', 'workstations', 'members', 'reports', 'settings'].includes(nextView)) {
+      adminView = nextView;
+      renderAdmin();
+    }
+    return;
+  }
   if (action === 'open-session') openSessionDialog(stationId);
   if (action === 'extend') runStationAction({ type: 'extend', stationId, minutes: 15 });
   if (action === 'pause' || action === 'resume' || action === 'stop') runStationAction({ type: action, stationId });
@@ -385,6 +527,9 @@ appElement.addEventListener('click', (event) => {
     .catch((error) => showToast(error.message));
   if (action === 'force-logout') window.cafeTimer.forceLogout(button.dataset.device)
     .then(() => showToast('Client logged out'))
+    .catch((error) => showToast(error.message));
+  if (action === 'toggle-launch-at-login') window.cafeTimer.setLaunchAtLogin(button.dataset.enabled !== 'true')
+    .then(() => showToast(button.dataset.enabled === 'true' ? 'Launch at login disabled' : 'Launch at login enabled'))
     .catch((error) => showToast(error.message));
   if (action === 'topup') { document.querySelector('#topup-form').reset(); document.querySelector('#topup-error').textContent = ''; document.querySelector('#topup-dialog').showModal(); }
   if (action === 'approve-account' || action === 'reject-account') window.cafeTimer.reviewAccount(Number(button.dataset.id), action === 'approve-account').catch((error) => showToast(error.message));

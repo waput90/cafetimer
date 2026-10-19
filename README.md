@@ -16,7 +16,7 @@ In the packaged app, choose **Server / cashier** on first launch. Change the ini
 On each workstation PC, install the same package and choose **Client / workstation** on first launch. The app creates its device ID automatically. For development, a fixed test device ID can be supplied with:
 
 ```powershell
-npx.cmd electron . --client=device-development-01
+npm.cmd run start:client
 ```
 
 The first screen asks only for the cashier server IPv4 address. On the first successful connection, the client records that server certificate's SHA-256 fingerprint. Later connections must match the recorded fingerprint, so replacing the server certificate requires reconnecting the client. Before the first connection succeeds, the client stays in setup mode and can be closed with **Close app** or Alt+F4. After setup succeeds, managed client mode prevents ordinary app closing.
@@ -39,6 +39,8 @@ From the server dashboard, an authorized cashier can:
 - Log out an active client and review completed CafeTimer usage sessions with member, workstation, duration, charge, and logout reason.
 - View members, change usernames, set a new password, and ban or unban accounts. Changing a password or banning an account closes its active session immediately.
 
+The server console separates daily operations into Dashboard, Workstations, Members, Reports, and Settings. Each view keeps its own scroll position during live refreshes. Global timer pricing is under Settings, member approval and account controls are under Members, and Reports contains seven-day sales and all-time workstation usage charts alongside detailed sales and session history.
+
 Passwords are never displayed. Usage history contains CafeTimer session records only; it does not capture screens, applications, files, or keystrokes. No payment processor is connected: an approved top-up records a cashier-confirmed credit, not an automatic payment.
 
 ## Storage and security
@@ -53,7 +55,9 @@ Credentials and session tokens travel through the Electron main process over HTT
 
 ## GitHub Releases and updates
 
-Packaged server and client installations check for a newer release shortly after launch and every six hours. A visible prompt offers to download the update, shows progress, and then offers **Restart and install**. Both roles use the same release because they come from one installer.
+Packaged server and client installations check for a newer release shortly after launch and every six hours. A visible prompt offers to download the update, shows progress, and then offers **Restart and install**. The downloaded NSIS update runs without the installer wizard and keeps the original installation directory. Because CafeTimer is installed per-machine, Windows can still show a UAC credential prompt during an update.
+
+The same per-machine installation requires a Windows administrator credential to uninstall CafeTimer through Apps & Features. This applies to both roles because they share one installer. CafeTimer does not use its in-app PIN as an uninstall password: Windows launches the uninstaller outside the Electron app, and Windows administrators retain control of installed software. Moving an older per-user installation to this release requires one manually approved, elevated installation.
 
 Push a version tag such as `v1.2.0` to the GitHub repository. The tag must exactly equal `v` followed by the version in `package.json`; `v.1.2.0` is invalid. The workflow in `.github/workflows/release.yml` validates the tag, runs the tests, builds the NSIS installer, and publishes the installer, block map, and `latest.yml` through a draft-first GitHub release flow. Increase the `version` in `package.json` before creating the tag. The repository must be public for clients to update without storing a GitHub token on each PC.
 
@@ -61,9 +65,12 @@ An Electron overlay cannot guarantee that a customer cannot reach Windows contro
 
 ## Test and build
 
+CafeTimer uses Electron Vite and TypeScript for the main process, preload, renderer, and tests. Tailwind CSS 4 is compiled through its Vite plugin and supplies the shared glass interface utilities.
+
 ```powershell
-node --test --test-isolation=none test/*.test.js
+npm.cmd run typecheck
+npm.cmd test
 npm.cmd run build
 ```
 
-The standard `npm.cmd test` command may hit `spawn EPERM` in restricted environments because Node's test runner starts child processes. The isolation-free command runs the same test files without that spawn. Windows kiosk policy and live multi-PC deployment still require device testing.
+Windows kiosk policy, UAC prompts, silent update behavior, and live multi-PC deployment still require device testing.

@@ -1,3 +1,4 @@
+// @ts-nocheck
 const path = require('node:path');
 const fs = require('node:fs');
 const os = require('node:os');
@@ -29,8 +30,9 @@ if (runMode === 'client' && !clientArgument && !savedRole?.deviceId) {
 if (runMode === 'client' && !/^[A-Za-z0-9_-]{3,64}$/.test(clientDeviceId)) {
   throw new Error('Invalid client device ID.');
 }
-const indexPath = path.join(__dirname, 'renderer', 'index.html');
-const trustedUrl = pathToFileURL(indexPath).toString();
+const indexPath = path.join(__dirname, '../renderer/index.html');
+const devServerUrl = process.env.ELECTRON_RENDERER_URL;
+const trustedUrl = devServerUrl || pathToFileURL(indexPath).toString();
 
 // A workstation and the admin console may run together during provisioning/testing,
 // while duplicate instances of the same role are still rejected.
@@ -56,10 +58,12 @@ if (!gotSingleInstanceLock) app.quit();
 
 function validateSender(event) {
   const senderUrl = event.senderFrame?.url;
+  const actual = senderUrl ? new URL(senderUrl) : null;
+  const trusted = new URL(trustedUrl);
   if (!mainWindow || event.sender !== mainWindow.webContents
     || event.senderFrame !== event.sender.mainFrame
-    || !senderUrl || new URL(senderUrl).pathname !== new URL(trustedUrl).pathname
-    || new URL(senderUrl).protocol !== 'file:') throw new Error('Untrusted IPC sender.');
+    || !actual || actual.origin !== trusted.origin || actual.pathname !== trusted.pathname
+    || (!devServerUrl && actual.protocol !== 'file:')) throw new Error('Untrusted IPC sender.');
 }
 
 function addActivity(state, text) {
@@ -117,7 +121,7 @@ function broadcastUpdateState() {
 function initializeUpdater() {
   if (!app.isPackaged) return;
   autoUpdater.autoDownload = false;
-  autoUpdater.autoInstallOnAppQuit = true;
+  autoUpdater.autoInstallOnAppQuit = false;
   autoUpdater.on('checking-for-update', () => {
     updateState = { ...updateState, status: 'checking' };
     broadcastUpdateState();
@@ -214,7 +218,7 @@ function createWindow() {
     autoHideMenuBar: true,
     title: isClient ? 'CafeTimer Client' : 'CafeTimer Control Center',
     webPreferences: {
-      preload: path.join(__dirname, 'preload.js'),
+      preload: path.join(__dirname, '../preload/index.js'),
       contextIsolation: true,
       nodeIntegration: false,
       sandbox: true,
@@ -223,7 +227,13 @@ function createWindow() {
   });
 
   secureWindow(mainWindow);
-  mainWindow.loadFile(indexPath, { query: { mode: runMode } });
+  if (devServerUrl) {
+    const rendererUrl = new URL(devServerUrl);
+    rendererUrl.searchParams.set('mode', runMode);
+    mainWindow.loadURL(rendererUrl.toString());
+  } else {
+    mainWindow.loadFile(indexPath, { query: { mode: runMode } });
+  }
   mainWindow.once('ready-to-show', () => {
     mainWindow.show();
     if (isClient) applyClientPresentation(getPublicState());
@@ -263,7 +273,8 @@ function registerIpc() {
     validateSender(event);
     if (!app.isPackaged || updateState.status !== 'downloaded') throw new Error('Update download is not complete.');
     allowClientExit = true;
-    setImmediate(() => autoUpdater.quitAndInstall(false, true));
+    // Suppress the NSIS wizard. A per-machine update can still show Windows UAC.
+    setImmediate(() => autoUpdater.quitAndInstall(true, true));
     return true;
   });
 

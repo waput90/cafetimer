@@ -1,3 +1,4 @@
+// @ts-nocheck
 const crypto = require('node:crypto');
 
 function newAccessCode() {

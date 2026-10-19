@@ -1,3 +1,4 @@
+// @ts-nocheck
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const { AccountDb } = require('../src/account-db');
@@ -85,6 +86,8 @@ test('admin pricing, sales, member management, forced logout, and usage history'
   db.directTopup(userId, 1000);
   assert.equal(db.adminState().sales.allTimeCents, 1000);
   assert.equal(db.adminState().sales.todayCents, 1000);
+  assert.equal(db.adminState().sales.transactionCount, 1);
+  assert.equal(db.adminState().sales.daily.at(-1).amountCents, 1000);
   assert.equal(db.adminState().sales.recent[0].source, 'admin');
 
   db.setPricing(60);
@@ -94,6 +97,8 @@ test('admin pricing, sales, member management, forced logout, and usage history'
   db.forceLogout('device-admin-test');
   assert.throws(() => db.status(token, 'device-admin-test'), /Login required/);
   assert.equal(db.adminState().usageHistory[0].endReason, 'administrator_logout');
+  assert.equal(db.adminState().usageSummary.totalSessions, 1);
+  assert.equal(db.adminState().usageByWorkstation[0].sessions, 1);
 
   token = db.login('member_one', 'original-password', 'device-admin-test');
   db.updateMember(userId, 'renamed_member', 'replacement-password');

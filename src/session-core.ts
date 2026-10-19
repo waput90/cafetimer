@@ -1,5 +1,5 @@
+// @ts-nocheck
 const ACTIVE_STATUSES = new Set(['active', 'paused']);
-
 function createStations(count = 12) {
   return Array.from({ length: count }, (_, index) => ({
     id: `PC-${String(index + 1).padStart(2, '0')}`,

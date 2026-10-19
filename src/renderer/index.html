@@ -5,7 +5,6 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <meta http-equiv="Content-Security-Policy" content="default-src 'self'; style-src 'self'; script-src 'self'; img-src 'self' data:; font-src 'self'; connect-src 'none'; object-src 'none'; base-uri 'none'; form-action 'self'">
     <title>CafeTimer</title>
-    <link rel="stylesheet" href="styles.css">
   </head>
   <body>
     <div id="app" aria-live="polite"></div>
@@ -120,6 +119,6 @@
       <div><strong id="update-title">CafeTimer update available</strong><p id="update-message"></p></div>
       <div class="update-actions"><button id="update-later" class="secondary" type="button">Later</button><button id="update-action" class="primary" type="button">Download update</button></div>
     </aside>
-    <script src="app.js"></script>
+    <script type="module" src="/app.ts"></script>
   </body>
 </html>
