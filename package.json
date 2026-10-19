@@ -1,0 +1,53 @@
+{
+  "name": "cafetimer",
+  "version": "1.0.0",
+  "description": "Electron-based cyber cafe workstation timer and kiosk dashboard",
+  "main": "src/main.js",
+  "author": "CafeTimer",
+  "license": "MIT",
+  "scripts": {
+    "start": "electron .",
+    "start:client": "electron . --client=device-development-01",
+    "test": "node --test",
+    "build": "electron-builder --win nsis",
+    "build:dir": "electron-builder --dir",
+    "release:github": "node scripts/release-github.js"
+  },
+  "devDependencies": {
+    "electron": "^44.7.0",
+    "electron-builder": "^26.0.12"
+  },
+  "build": {
+    "appId": "com.cafetimer.desktop",
+    "productName": "CafeTimer",
+    "asar": true,
+    "npmRebuild": false,
+    "directories": {
+      "output": "dist"
+    },
+    "files": [
+      "src/**/*",
+      "package.json"
+    ],
+    "win": {
+      "target": [
+        {
+          "target": "nsis",
+          "arch": [
+            "x64"
+          ]
+        }
+      ]
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": "always",
+      "createStartMenuShortcut": true
+    }
+  },
+  "dependencies": {
+    "electron-updater": "^6.8.9",
+    "selfsigned": "^5.5.0"
+  }
+}

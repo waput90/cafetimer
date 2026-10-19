@@ -1,0 +1,104 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; style-src 'self'; script-src 'self'; img-src 'self' data:; font-src 'self'; connect-src 'none'; object-src 'none'; base-uri 'none'; form-action 'self'">
+    <title>CafeTimer</title>
+    <link rel="stylesheet" href="styles.css">
+  </head>
+  <body>
+    <div id="app" aria-live="polite"></div>
+
+    <dialog id="session-dialog" class="dialog">
+      <form id="session-form" method="dialog">
+        <div class="dialog-heading">
+          <div>
+            <p class="eyebrow">NEW SESSION</p>
+            <h2 id="session-title">Start workstation</h2>
+          </div>
+          <button class="icon-button" type="button" data-close-dialog="session-dialog" aria-label="Close">×</button>
+        </div>
+        <input id="session-station-id" type="hidden">
+        <label>Customer name <input id="customer-name" maxlength="50" placeholder="Walk-in"></label>
+        <div class="duration-label">
+          <span>Session length</span>
+          <strong id="duration-output">60 min</strong>
+        </div>
+        <input id="session-minutes" type="range" min="15" max="480" step="15" value="60">
+        <div class="quick-times">
+          <button type="button" data-minutes="30">30m</button>
+          <button type="button" data-minutes="60">1h</button>
+          <button type="button" data-minutes="120">2h</button>
+          <button type="button" data-minutes="180">3h</button>
+        </div>
+        <label class="toggle-row"><input id="open-time" type="checkbox"><span>Open time · pay after use</span></label>
+        <div class="session-price"><span>Estimated total</span><strong id="price-output">₱30.00</strong></div>
+        <button class="primary wide" id="start-session" value="default">Start session</button>
+      </form>
+    </dialog>
+
+    <dialog id="pin-dialog" class="dialog pin-dialog">
+      <form id="pin-form" method="dialog">
+        <p class="eyebrow">ADMINISTRATOR ACCESS</p>
+        <h2>Unlock CafeTimer</h2>
+        <p class="muted">Enter the administrator PIN to close this workstation client.</p>
+        <input id="admin-pin" class="pin-input" type="password" inputmode="numeric" maxlength="12" autocomplete="off" placeholder="••••">
+        <p id="pin-error" class="error" role="alert"></p>
+        <div class="dialog-actions">
+          <button type="button" data-close-dialog="pin-dialog" class="secondary">Cancel</button>
+          <button value="default" class="primary">Unlock & exit</button>
+        </div>
+      </form>
+    </dialog>
+
+    <dialog id="access-dialog" class="dialog">
+      <form id="access-form" method="dialog">
+        <p class="eyebrow">SESSION READY</p>
+        <h2 id="access-title">Customer access code</h2>
+        <p class="muted">Give this code to the customer. It is shown only once.</p>
+        <output id="access-code" class="access-code"></output>
+        <div class="dialog-actions"><button class="primary" value="default">Done</button></div>
+      </form>
+    </dialog>
+
+    <dialog id="change-pin-dialog" class="dialog">
+      <form id="change-pin-form" method="dialog">
+        <p class="eyebrow">ADMINISTRATOR SETUP</p>
+        <h2>Change administrator PIN</h2>
+        <p class="muted">The initial PIN is 2468. Set a private 6 to 12 digit PIN before using workstation exit.</p>
+        <label>Current PIN <input id="current-pin" type="password" inputmode="numeric" autocomplete="off" required></label>
+        <label>New PIN <input id="next-pin" type="password" inputmode="numeric" minlength="6" maxlength="12" autocomplete="off" required></label>
+        <p id="change-pin-error" class="error" role="alert"></p>
+        <div class="dialog-actions"><button type="button" data-close-dialog="change-pin-dialog" class="secondary">Cancel</button><button class="primary" value="default">Save PIN</button></div>
+      </form>
+    </dialog>
+
+    <dialog id="topup-dialog" class="dialog">
+      <form id="topup-form" method="dialog">
+        <p class="eyebrow">REQUEST TOP-UP</p><h2>Add balance</h2>
+        <p class="muted">The cashier must approve your request before balance is added.</p>
+        <label>Amount in PHP <input id="topup-amount" type="number" min="1" max="1000" step="0.01" required></label>
+        <p id="topup-error" class="error" role="alert"></p>
+        <div class="dialog-actions"><button type="button" data-close-dialog="topup-dialog" class="secondary">Cancel</button><button class="primary" value="default">Request</button></div>
+      </form>
+    </dialog>
+
+    <dialog id="rename-client-dialog" class="dialog">
+      <form id="rename-client-form" method="dialog">
+        <p class="eyebrow">CLIENT NAME</p><h2>Rename workstation</h2>
+        <input id="rename-device-id" type="hidden">
+        <label>Display name <input id="rename-client-name" type="text" minlength="1" maxlength="32" autocomplete="off" required></label>
+        <p id="rename-client-error" class="error" role="alert"></p>
+        <div class="dialog-actions"><button type="button" data-close-dialog="rename-client-dialog" class="secondary">Cancel</button><button class="primary" value="default">Save name</button></div>
+      </form>
+    </dialog>
+
+    <div id="toast" class="toast" role="status"></div>
+    <aside id="update-banner" class="update-banner" hidden aria-live="polite">
+      <div><strong id="update-title">CafeTimer update available</strong><p id="update-message"></p></div>
+      <div class="update-actions"><button id="update-later" class="secondary" type="button">Later</button><button id="update-action" class="primary" type="button">Download update</button></div>
+    </aside>
+    <script src="app.js"></script>
+  </body>
+</html>
