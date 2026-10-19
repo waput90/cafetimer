@@ -9,7 +9,7 @@
     "start": "electron .",
     "start:client": "electron . --client=device-development-01",
     "test": "node --test",
-    "build": "electron-builder --win nsis",
+    "build": "electron-builder --win nsis --publish never",
     "build:dir": "electron-builder --dir"
   },
   "devDependencies": {
